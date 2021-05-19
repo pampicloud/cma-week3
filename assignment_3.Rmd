@@ -1,0 +1,305 @@
+---
+title: "ZHAW - Exercise 3 - Assignment"
+author: "Oliver Eberli"
+date: "19.05.2021"
+output:
+  html_document:
+    code_folding: show
+    fig_caption: yes
+    highlight: tango
+    number_sections: no
+    theme: journal
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+### Data Exploration
+
+# Set up project
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+#'* Write function to check if library is needed and set basic settings *
+#'* Use eye-friendly comment syntax *
+
+
+options(scipen=6)         # Display digits, not the scientific version
+options(digits.secs=6)    # Use milliseconds in Date/Time data types
+options(warning=FALSE)    # Don't show warnings
+par(mfrow=c(1,1))         # Reset plot placement to normal 1 by 1
+
+# ------------------------------------------------------------------------------
+# packages:
+
+## Default repository
+local({r <- getOption("repos")
+r["CRAN"] <- "http://cran.r-project.org" 
+options(repos=r)
+})
+
+pkgTest <- function(x)
+{
+  if (!require(x,character.only = TRUE))
+  {
+    install.packages(x,dep=TRUE)
+    if(!require(x,character.only = TRUE)) stop("Package not found")
+  }
+}
+
+pkgTest("readr")
+pkgTest("dplyr")
+pkgTest("ggplot2")
+pkgTest("tidyverse")
+pkgTest("sf")
+pkgTest("SimilarityMeasures")
+
+
+```
+
+
+
+## Set up data
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Load data.
+caro <- read_delim("https://raw.githubusercontent.com/ComputationalMovementAnalysis/FS21/master/00_Rawdata/caro60.csv", delim=",")
+
+
+caro <- st_as_sf(caro, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+
+
+```
+
+## Measure the distance from every point to every other point within this temporal window v
+ 
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+caro <- caro %>%
+  mutate(
+    nMinus3 = sqrt((lag(E,3)-E)^2+(lag(N,3)-N)^2),   # distance to pos -3 minutes
+    nMinus2 = sqrt((lag(E,2)-E)^2+(lag(N,2)-N)^2),   # distance to pos -2 minutes
+    nMinus1 = sqrt((lag(E,1)-E)^2+(lag(N,1)-N)^2),   # distance to pos -1 minutes
+    nPlus1  = sqrt((E-lead(E,1))^2+(N-lead(N,1))^2), # distance to pos +1 mintues
+    nPlus2  = sqrt((E-lead(E,2))^2+(N-lead(N,2))^2),  # distance to pos +2 minutes
+    nPlus3  = sqrt((E-lead(E,3))^2+(N-lead(N,3))^2)  # distance to pos +3 minutes
+  )
+
+```
+
+## calculate the mean distance
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+caro <- caro %>%
+  rowwise() %>%
+  mutate(
+    stepMean = mean(c(nMinus3,nMinus2,nMinus1,nPlus1,nPlus2,nPlus3))
+  ) %>%
+  ungroup() 
+
+# investigate the data
+summary(caro$stepMean)
+hist(caro$stepMean)
+boxplot(caro$stepMean)
+
+
+```
+
+
+
+## Remove “static points”
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+caro <- caro %>% 
+  ungroup() %>%
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE))
+
+
+caro_filter <- caro %>%
+  filter(!static)
+
+caro_filter%>%
+  ggplot(aes(E, N))  +
+  geom_path() +
+  geom_point() +
+  coord_fixed() +
+  theme(legend.position = "bottom")
+
+
+
+```
+
+
+## Visualize segmented trajectories
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+p <- ggplot(caro, aes(E, N)) +
+  geom_path() +
+  geom_point(aes(colour = factor(static)))
+
+p
+```
+
+## Segment-based analysis
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+
+rle_id <- function(vec){
+  x <- rle(vec)$lengths
+  as.factor(rep(seq_along(x), times=x))
+}
+
+caro <- caro %>%
+  mutate(segment_id = rle_id(static))
+
+caro
+
+
+```
+## Movement segments coloured by segment id
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+p <- ggplot(caro, aes(E, N)) +
+  geom_path() +
+  geom_point(aes(colour = factor(segment_id))) +
+  ggtitle("Movement segments coloured by segment id \n uncleaned") + 
+  theme(legend.position = "none")
+p
+```
+
+## Visualize segmented trajectories
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+caro <- caro %>%
+  group_by(segment_id) %>%
+  mutate(count = n())
+
+p <- ggplot(filter(caro, count < 15), aes(E, N)) +
+  geom_path() +
+  geom_point(aes(colour = factor(segment_id))) +
+  ggtitle("long segments \n removed segments < 15") + 
+  theme(legend.position = "none")
+p
+```
+
+## Visualize segmented trajectories
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Load data.
+pedestrian <- read_delim("https://raw.githubusercontent.com/ComputationalMovementAnalysis/FS21/master/00_Rawdata/pedestrian.csv", delim=",")
+
+
+pedestrian <- st_as_sf(pedestrian, coords = c("E", "N"), crs = 2056, remove = FALSE)
+
+
+```
+
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+pedG <- ggplot(pedestrian, aes(E, N)) +
+  geom_path() +
+  geom_point(aes(colour = factor(TrajID)))
+pedG + facet_wrap( ~ TrajID, nrow = 2) + theme(legend.position = "none") +
+  ggtitle("Visual comparison of the 6 TrajIDs \n uncleaned")
+
+```
+
+## Calculate similarity
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+pedestrian <- as.data.frame(pedestrian)
+
+traj1 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 1),], E,N))
+traj2 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 2),], E,N))
+traj3 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 3),], E,N))
+traj4 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 4),], E,N))
+traj5 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 5),], E,N))
+traj6 <- data.matrix(dplyr::select(pedestrian[ which(pedestrian$TrajID == 6),], E,N))
+
+
+trajectoryID <- c(2,3,4,5,6)
+functionN <- c('EditDist','EditDist','EditDist','EditDist','EditDist')
+
+EditDist2 <- EditDist(traj1, traj2, 1)
+EditDist3 <- EditDist(traj1, traj3, 1)
+EditDist4 <- EditDist(traj1, traj4, 1)
+EditDist5 <- EditDist(traj1, traj5, 1)
+EditDist6 <- EditDist(traj1, traj6, 1)
+
+editdist <- rbind(EditDist2,EditDist3,EditDist4,EditDist5,EditDist6)
+test1 <- cbind(functionN,trajectoryID,editdist)
+
+functionN <- c('DTW','DTW','DTW','DTW','DTW')
+
+DTW2 <- DTW(traj1, traj2, -1)
+DTW3 <- DTW(traj1, traj3, -1)
+DTW4 <- DTW(traj1, traj4, -1)
+DTW5 <- DTW(traj1, traj5, -1)
+DTW6 <- DTW(traj1, traj6, -1)
+
+dtw <- rbind(DTW2,DTW3,DTW4,DTW5,DTW6)
+test2 <- cbind(functionN,trajectoryID,dtw)
+
+functionN <- c('Frechet','Frechet','Frechet','Frechet','Frechet')
+
+Frechet2 <- Frechet(traj1, traj2, testLeash = -1)
+Frechet3 <- Frechet(traj1, traj3, testLeash = -1)
+Frechet4 <- Frechet(traj1, traj4, testLeash = -1)
+Frechet5 <- Frechet(traj1, traj5, testLeash = -1)
+Frechet6 <- Frechet(traj1, traj6, testLeash = -1)
+
+frechet <- rbind(Frechet2,Frechet3,Frechet4,Frechet5,Frechet6)
+test3 <- cbind(functionN,trajectoryID,frechet)
+
+functionN <- c('LCSS','LCSS','LCSS','LCSS','LCSS')
+
+
+lcss <- rbind(1,0,1,4,1)
+
+test4 <- cbind(functionN,trajectoryID,lcss)
+
+# this took a lot of time. I calculated the values. After I tried to export the RMD the calculation took too long. I replaced the lcss values with simple numbers.
+# LCSS2 <- LCSS(traj1, traj2, pointSpacing = -1, returnTrans = F)
+# LCSS3 <- LCSS(traj1, traj3, pointSpacing = -1, returnTrans = F)
+# LCSS4 <- LCSS(traj1, traj4, pointSpacing = -1, returnTrans = F)
+# LCSS5 <- LCSS(traj1, traj5, pointSpacing = -1, returnTrans = F)
+# LCSS6 <- LCSS(traj1, traj6, pointSpacing = -1, returnTrans = F)
+
+simMeasures <- as.data.frame(rbind(test1,test2,test3,test4))
+simMeasures$V3 <- as.numeric(simMeasures$V3)
+simMeasures <- simMeasures %>% 
+  rename(
+    value = V3,
+    )
+
+ggplot(filter(simMeasures, functionN == "EditDist"), aes(x=trajectoryID, y=value, fill=trajectoryID)) +
+  geom_bar(stat="identity")+theme_minimal()
+ggplot(filter(simMeasures, functionN == "DTW"), aes(x=trajectoryID, y=value, fill=trajectoryID)) +
+  geom_bar(stat="identity")+theme_minimal()
+ggplot(filter(simMeasures, functionN == "Frechet"), aes(x=trajectoryID, y=value, fill=trajectoryID)) +
+  geom_bar(stat="identity")+theme_minimal()
+ggplot(filter(simMeasures, functionN == "LCSS"), aes(x=trajectoryID, y=value, fill=trajectoryID)) +
+  geom_bar(stat="identity")+theme_minimal()
+
+
+
+```
